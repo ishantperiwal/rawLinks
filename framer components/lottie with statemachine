@@ -1,0 +1,179 @@
+import React, { useEffect, useRef, useState } from "react"
+import { addPropertyControls, ControlType } from "framer"
+// We use the vanilla web library, which is much more stable in Framer than the React wrapper
+import { DotLottie } from "https://esm.sh/@lottiefiles/dotlottie-web"
+
+/**
+ * @framerIntrinsicWidth 400
+ * @framerIntrinsicHeight 400
+ */
+export default function NativeDotLottie(props) {
+    const {
+        lottieUrl,
+        bgUrl,
+        lottieX,
+        lottieY,
+        lottieWidth,
+        stateMachineId,
+        hoverInputName,
+        backgroundColor,
+    } = props
+
+    const canvasRef = useRef(null)
+    const [dotLottieInstance, setDotLottieInstance] = useState(null)
+
+    useEffect(() => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+
+        // 1. Initialize the DotLottie player
+        const dotLottie = new DotLottie({
+            canvas: canvas,
+            src: lottieUrl,
+            loop: true,
+            autoplay: true,
+            backgroundColor: "transparent",
+        })
+
+        // 2. Load the State Machine once the player is ready
+        dotLottie.addEventListener("load", () => {
+            // We wrap this in a try/catch in case the ID is wrong
+            try {
+                dotLottie.stateMachineLoad(stateMachineId)
+                dotLottie.stateMachineStart()
+            } catch (e) {
+                console.warn("State machine failed to load:", e)
+            }
+        })
+
+        setDotLottieInstance(dotLottie)
+
+        // Cleanup when the component is removed
+        return () => {
+            dotLottie.destroy()
+        }
+    }, [lottieUrl, stateMachineId]) // Re-run if URL or ID changes
+
+    // 3. Handle Hover Logic
+    const handleHover = (isHovered) => {
+        if (!dotLottieInstance) return
+
+        // Try to set the boolean input for the State Machine
+        try {
+            dotLottieInstance.stateMachineSetBooleanInput(
+                stateMachineId,
+                hoverInputName,
+                isHovered
+            )
+        } catch (e) {
+            // Fallback: If no state machine matches, just play/pause
+            if (isHovered) dotLottieInstance.play()
+            else dotLottieInstance.pause()
+        }
+    }
+
+    return (
+        <div
+            style={{
+                width: "100%",
+                height: "100%",
+                backgroundColor: backgroundColor,
+                position: "relative",
+                overflow: "hidden",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+            }}
+            onMouseEnter={() => handleHover(true)}
+            onMouseLeave={() => handleHover(false)}
+        >
+            {/* Background Image Layer */}
+            {bgUrl && (
+                <div
+                    style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        height: "100%",
+                        backgroundImage: `url(${bgUrl})`,
+                        backgroundSize: "contain",
+                        backgroundPosition: "center",
+                        backgroundRepeat: "no-repeat",
+                        zIndex: 1,
+                    }}
+                />
+            )}
+
+            {/* Lottie Canvas Layer */}
+            <div
+                style={{
+                    position: "absolute",
+                    left: `${lottieX}%`,
+                    top: `${lottieY}%`,
+                    width: `${lottieWidth}%`,
+                    zIndex: 2,
+                }}
+            >
+                <canvas
+                    ref={canvasRef}
+                    style={{
+                        width: "100%",
+                        height: "100%",
+                        display: "block",
+                    }}
+                />
+            </div>
+        </div>
+    )
+}
+
+NativeDotLottie.defaultProps = {
+    lottieUrl:
+        "https://lottie.host/4a6c2560-6052-4740-a359-325d73676c7d/7M3i1y7Q4g.lottie",
+    bgUrl: "",
+    lottieX: 10,
+    lottieY: 10,
+    lottieWidth: 30,
+    stateMachineId: "stateMachine",
+    hoverInputName: "isHover",
+    backgroundColor: "transparent",
+}
+
+addPropertyControls(NativeDotLottie, {
+    lottieUrl: { type: ControlType.String, title: "Lottie URL" },
+    bgUrl: { type: ControlType.Image, title: "Background" },
+    lottieX: {
+        type: ControlType.Number,
+        title: "X %",
+        min: 0,
+        max: 100,
+        unit: "%",
+    },
+    lottieY: {
+        type: ControlType.Number,
+        title: "Y %",
+        min: 0,
+        max: 100,
+        unit: "%",
+    },
+    lottieWidth: {
+        type: ControlType.Number,
+        title: "Width %",
+        min: 1,
+        max: 100,
+        unit: "%",
+    },
+    backgroundColor: { type: ControlType.Color, title: "Page Bg" },
+    stateMachineId: {
+        type: ControlType.String,
+        title: "State ID",
+        defaultValue: "stateMachine",
+    },
+    hoverInputName: {
+        type: ControlType.String,
+        title: "Input Name",
+        defaultValue: "isHover",
+        description: "The name of the Boolean input in your Lottie file.",
+    },
+})
