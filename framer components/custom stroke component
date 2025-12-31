@@ -1,0 +1,393 @@
+import * as React from "react"
+import { addPropertyControls, ControlType } from "framer"
+
+/**
+ * IconPathRepeater – GLOBAL SCALE VERSION
+ * Automatic path bounds detection + Global Scale slider.
+ */
+
+type IconState = {
+    x: number
+    y: number
+    angle: number
+    flip: number
+    flipVel: number
+    scale: number
+    scaleVel: number
+}
+
+export default function IconPathRepeater(props: any) {
+    const {
+        pathFile,
+        iconSVG,
+        iconCount,
+        alignToPath,
+        strokeColor,
+        strokeWidth,
+        iconSize,
+        hitRadius,
+        hoverScale,
+        springStiffness,
+        springDamping,
+        globalScale, // NEW: Replaces baseWidth/Height
+    } = props
+
+    const canvasRef = React.useRef<HTMLCanvasElement>(null)
+    const containerRef = React.useRef<HTMLDivElement>(null)
+    const mouse = React.useRef({ x: -9999, y: -9999 })
+    const raf = React.useRef<number>()
+
+    const [size, setSize] = React.useState({ w: 1, h: 1 })
+    const [img, setImg] = React.useState<HTMLImageElement | null>(null)
+    const [center, setCenter] = React.useState({ x: 0, y: 0 })
+    const [icons, setIcons] = React.useState<IconState[]>([])
+    const [resolvedPath, setResolvedPath] = React.useState<string>("")
+    const [pathBounds, setPathBounds] = React.useState({
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 100,
+    })
+
+    /* ---------------- Resize observer ---------------- */
+    React.useEffect(() => {
+        if (!containerRef.current) return
+        const ro = new ResizeObserver(([entry]) => {
+            const r = entry.contentRect
+            setSize({ w: Math.max(1, r.width), h: Math.max(1, r.height) })
+        })
+        ro.observe(containerRef.current)
+        return () => ro.disconnect()
+    }, [])
+
+    /* ---------------- Canvas DPR ---------------- */
+    React.useEffect(() => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const dpr = window.devicePixelRatio || 1
+        canvas.width = size.w * dpr
+        canvas.height = size.h * dpr
+        const ctx = canvas.getContext("2d")
+        ctx?.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }, [size])
+
+    /* ---------------- Load Path & Calculate Bounds ---------------- */
+    React.useEffect(() => {
+        if (!pathFile) {
+            setResolvedPath("")
+            return
+        }
+        async function loadPath() {
+            try {
+                const res = await fetch(pathFile)
+                const text = await res.text()
+                const parser = new DOMParser()
+                const doc = parser.parseFromString(text, "image/svg+xml")
+                const pathElem = doc.querySelector("path")
+                if (pathElem) {
+                    const d = pathElem.getAttribute("d") || ""
+                    setResolvedPath(d)
+
+                    // Temporary SVG to get path dimensions
+                    const tempSvg = document.createElementNS(
+                        "http://www.w3.org/2000/svg",
+                        "svg"
+                    )
+                    const tempPath = document.createElementNS(
+                        "http://www.w3.org/2000/svg",
+                        "path"
+                    )
+                    tempPath.setAttribute("d", d)
+                    tempSvg.appendChild(tempPath)
+                    document.body.appendChild(tempSvg)
+                    const bbox = tempPath.getBBox()
+                    setPathBounds({
+                        x: bbox.x,
+                        y: bbox.y,
+                        w: bbox.width,
+                        h: bbox.height,
+                    })
+                    document.body.removeChild(tempSvg)
+                }
+            } catch (e) {
+                console.error(e)
+            }
+        }
+        loadPath()
+    }, [pathFile])
+
+    /* ---------------- Load Icon ---------------- */
+    React.useEffect(() => {
+        if (!iconSVG) {
+            setImg(null)
+            return
+        }
+        async function processSVG() {
+            try {
+                const response = await fetch(iconSVG)
+                const svgContent = await response.text()
+                const wrap = document.createElement("div")
+                wrap.style.cssText = "position:absolute;visibility:hidden"
+                wrap.innerHTML = svgContent
+                document.body.appendChild(wrap)
+                const svg = wrap.querySelector("svg") as any
+                if (svg) {
+                    const bb = svg.getBBox()
+                    setCenter({
+                        x: bb.x + bb.width / 2,
+                        y: bb.y + bb.height / 2,
+                    })
+                }
+                document.body.removeChild(wrap)
+                const blob = new Blob([svgContent], { type: "image/svg+xml" })
+                const url = URL.createObjectURL(blob)
+                const image = new Image()
+                image.onload = () => {
+                    setImg(image)
+                    URL.revokeObjectURL(url)
+                }
+                image.src = url
+            } catch (e) {
+                console.error(e)
+            }
+        }
+        processSVG()
+    }, [iconSVG])
+
+    /* ---------------- Build Icons ---------------- */
+    React.useEffect(() => {
+        if (!resolvedPath) {
+            setIcons([])
+            return
+        }
+        try {
+            const p = document.createElementNS(
+                "http://www.w3.org/2000/svg",
+                "path"
+            )
+            p.setAttribute("d", resolvedPath)
+            const len = p.getTotalLength()
+            const next: IconState[] = []
+            const count = Math.max(1, Math.round(iconCount))
+            for (let i = 0; i < count; i++) {
+                const t = count === 1 ? 0.5 : i / (count - 1)
+                const d = t * len
+                const pt = p.getPointAtLength(d)
+                let angle = 0
+                if (alignToPath) {
+                    const pt2 = p.getPointAtLength(Math.min(len, d + 1))
+                    angle = Math.atan2(pt2.y - pt.y, pt2.x - pt.x) + Math.PI / 2
+                }
+                next.push({
+                    x: pt.x,
+                    y: pt.y,
+                    angle,
+                    flip: 0,
+                    flipVel: 0,
+                    scale: 1,
+                    scaleVel: 0,
+                })
+            }
+            setIcons(next)
+        } catch {
+            setIcons([])
+        }
+    }, [resolvedPath, iconCount, alignToPath])
+
+    /* ---------------- Animation Loop ---------------- */
+    React.useEffect(() => {
+        const canvas = canvasRef.current
+        const ctx = canvas?.getContext("2d")
+        if (!ctx) return
+
+        const animate = () => {
+            ctx.clearRect(0, 0, size.w, size.h)
+
+            // Center the path bounds in the component
+            const centerX = size.w / 2
+            const centerY = size.h / 2
+
+            // Apply scale and center
+            ctx.save()
+            ctx.translate(centerX, centerY)
+            ctx.scale(globalScale, globalScale)
+            // Offset by the path's own internal coordinates to center it
+            ctx.translate(
+                -(pathBounds.x + pathBounds.w / 2),
+                -(pathBounds.y + pathBounds.h / 2)
+            )
+
+            if (strokeWidth > 0 && resolvedPath) {
+                ctx.save()
+                ctx.strokeStyle = strokeColor
+                ctx.lineWidth = strokeWidth / globalScale
+                ctx.lineCap = "round"
+                ctx.lineJoin = "round"
+                ctx.stroke(new Path2D(resolvedPath))
+                ctx.restore()
+            }
+
+            if (img && icons.length > 0) {
+                const hitPx = hitRadius // Hit radius is now absolute relative to mouse
+                const baseDim = Math.max(img.width, img.height)
+
+                icons.forEach((icon) => {
+                    ctx.save()
+                    ctx.translate(icon.x, icon.y)
+
+                    // Calculate mouse position relative to this scaled icon
+                    const screenX =
+                        (icon.x - (pathBounds.x + pathBounds.w / 2)) *
+                            globalScale +
+                        centerX
+                    const screenY =
+                        (icon.y - (pathBounds.y + pathBounds.h / 2)) *
+                            globalScale +
+                        centerY
+                    const dx = mouse.current.x - screenX
+                    const dy = mouse.current.y - screenY
+                    const hover = Math.hypot(dx, dy) < hitPx
+
+                    const tf = hover ? 1 : 0
+                    const ts = hover ? hoverScale : 1
+
+                    icon.flipVel += (tf - icon.flip) * springStiffness
+                    icon.flipVel *= springDamping
+                    icon.flip += icon.flipVel
+
+                    icon.scaleVel += (ts - icon.scale) * springStiffness
+                    icon.scaleVel *= springDamping
+                    icon.scale += icon.scaleVel
+
+                    ctx.rotate(icon.angle)
+                    ctx.rotate(icon.flip * Math.PI)
+
+                    const drawScale =
+                        ((iconSize / baseDim) * icon.scale) / globalScale
+                    ctx.scale(drawScale, drawScale)
+                    ctx.translate(-center.x, -center.y)
+                    ctx.drawImage(img, 0, 0)
+                    ctx.restore()
+                })
+            }
+            ctx.restore()
+            raf.current = requestAnimationFrame(animate)
+        }
+        raf.current = requestAnimationFrame(animate)
+        return () => raf.current && cancelAnimationFrame(raf.current)
+    }, [
+        icons,
+        img,
+        size,
+        resolvedPath,
+        pathBounds,
+        strokeWidth,
+        strokeColor,
+        iconSize,
+        hitRadius,
+        hoverScale,
+        springStiffness,
+        springDamping,
+        globalScale,
+        center,
+    ])
+
+    return (
+        <div
+            ref={containerRef}
+            style={{ width: "100%", height: "100%", overflow: "visible" }}
+            onMouseMove={(e) => {
+                const r = containerRef.current!.getBoundingClientRect()
+                mouse.current = { x: e.clientX - r.left, y: e.clientY - r.top }
+            }}
+            onMouseLeave={() => (mouse.current = { x: -9999, y: -9999 })}
+        >
+            <canvas ref={canvasRef} />
+        </div>
+    )
+}
+
+/* ---------------- Framer Controls ---------------- */
+
+addPropertyControls(IconPathRepeater, {
+    pathFile: {
+        type: ControlType.File,
+        title: "Path SVG",
+        allowedFileTypes: ["svg"],
+    },
+    iconSVG: {
+        type: ControlType.File,
+        title: "Icon SVG",
+        allowedFileTypes: ["svg"],
+    },
+    globalScale: {
+        type: ControlType.Number,
+        title: "Global Scale",
+        min: 0.1,
+        max: 5,
+        step: 0.1,
+        defaultValue: 1,
+    },
+    iconCount: {
+        type: ControlType.Number,
+        title: "Count",
+        min: 1,
+        max: 100,
+        defaultValue: 15,
+    },
+    iconSize: {
+        type: ControlType.Number,
+        title: "Icon Size",
+        min: 4,
+        max: 200,
+        defaultValue: 40,
+    },
+    hitRadius: {
+        type: ControlType.Number,
+        title: "Hit Radius",
+        min: 10,
+        max: 400,
+        defaultValue: 80,
+    },
+    strokeColor: {
+        type: ControlType.Color,
+        title: "Path Color",
+        defaultValue: "#CCC",
+    },
+    strokeWidth: {
+        type: ControlType.Number,
+        title: "Path Width",
+        min: 0,
+        max: 700,
+        defaultValue: 2,
+    },
+    alignToPath: {
+        type: ControlType.Boolean,
+        title: "Auto Rotate",
+        defaultValue: true,
+    },
+    hoverScale: {
+        type: ControlType.Number,
+        title: "Hover Scale",
+        min: 1,
+        max: 3,
+        step: 0.1,
+        defaultValue: 1.5,
+    },
+    springStiffness: {
+        type: ControlType.Number,
+        title: "Stiffness",
+        min: 0.01,
+        max: 0.5,
+        step: 0.01,
+        defaultValue: 0.15,
+    },
+    springDamping: {
+        type: ControlType.Number,
+        title: "Damping",
+        min: 0.1,
+        max: 0.95,
+        step: 0.01,
+        defaultValue: 0.8,
+    },
+})
