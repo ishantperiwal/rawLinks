@@ -1,0 +1,208 @@
+import React from "react"
+import {
+    motion,
+    useScroll,
+    useVelocity,
+    useTransform,
+    useSpring,
+} from "framer-motion"
+import { addPropertyControls, ControlType } from "framer"
+
+export default function PhysicsFlower(props) {
+    const {
+        image,
+        intensity,
+        stiffness,
+        damping,
+        idleSpeed,
+        idleRange,
+        originX,
+        originY,
+        showAnchor,
+        invertScroll,
+    } = props
+
+    // 1. Capture Scroll Velocity (High Performance)
+    const { scrollY } = useScroll()
+    const scrollVelocity = useVelocity(scrollY)
+
+    // 2. Map velocity to rotation with Invert Logic
+    const range = invertScroll
+        ? [intensity, 0, -intensity]
+        : [-intensity, 0, intensity]
+
+    const scrollRotation = useTransform(scrollVelocity, [-3000, 0, 3000], range)
+
+    // 3. Apply Spring Physics (GPU Accelerated)
+    const springRotation = useSpring(scrollRotation, {
+        stiffness: stiffness,
+        damping: damping,
+        restDelta: 0.01,
+    })
+
+    return (
+        <div style={containerStyle}>
+            <motion.div
+                style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    transformOrigin: `${originX}% ${originY}%`,
+                    rotate: springRotation,
+                    willChange: "transform",
+                }}
+            >
+                {/* Nested div for Idle Breathing to avoid logic clashing */}
+                <motion.div
+                    style={{
+                        width: "100%",
+                        height: "100%",
+                        transformOrigin: `${originX}% ${originY}%`,
+                        willChange: "transform",
+                    }}
+                    animate={{
+                        rotate: [-idleRange, idleRange, -idleRange],
+                    }}
+                    transition={{
+                        duration: idleSpeed,
+                        repeat: Infinity,
+                        ease: "easeInOut",
+                    }}
+                >
+                    {image ? (
+                        <img
+                            src={image}
+                            style={imageStyle}
+                            alt="Flower Asset"
+                        />
+                    ) : (
+                        <div style={placeholderStyle}>Upload Asset</div>
+                    )}
+                </motion.div>
+            </motion.div>
+
+            {/* Anchor Point Preview */}
+            {showAnchor && (
+                <div
+                    style={{
+                        position: "absolute",
+                        left: `${originX}%`,
+                        top: `${originY}%`,
+                        width: 10,
+                        height: 10,
+                        backgroundColor: "red",
+                        borderRadius: "50%",
+                        transform: "translate(-50%, -50%)",
+                        zIndex: 100,
+                        pointerEvents: "none",
+                        boxShadow: "0 0 6px rgba(0,0,0,0.4)",
+                        border: "2px solid white",
+                    }}
+                />
+            )}
+        </div>
+    )
+}
+
+// --- Default Props ---
+PhysicsFlower.defaultProps = {
+    intensity: 25,
+    stiffness: 120,
+    damping: 20,
+    idleSpeed: 5,
+    idleRange: 2,
+    originX: 0,
+    originY: 0,
+    showAnchor: true,
+    invertScroll: false,
+}
+
+// --- UI Controls (Make sure this part is at the very bottom) ---
+addPropertyControls(PhysicsFlower, {
+    image: { type: ControlType.Image, title: "Asset" },
+    showAnchor: {
+        type: ControlType.Boolean,
+        title: "Show Anchor",
+    },
+    invertScroll: {
+        type: ControlType.Boolean,
+        title: "Invert Direction",
+    },
+    originX: {
+        type: ControlType.Number,
+        title: "Anchor X %",
+        min: 0,
+        max: 100,
+        unit: "%",
+    },
+    originY: {
+        type: ControlType.Number,
+        title: "Anchor Y %",
+        min: 0,
+        max: 100,
+        unit: "%",
+    },
+    intensity: {
+        type: ControlType.Number,
+        title: "Tilt Intensity",
+        min: 0,
+        max: 120,
+    },
+    stiffness: {
+        type: ControlType.Number,
+        title: "Stiffness",
+        min: 1,
+        max: 800,
+    },
+    damping: {
+        type: ControlType.Number,
+        title: "Damping",
+        min: 1,
+        max: 100,
+    },
+    idleSpeed: {
+        type: ControlType.Number,
+        title: "Idle Speed (s)",
+        min: 0.5,
+        max: 20,
+    },
+    idleRange: {
+        type: ControlType.Number,
+        title: "Idle Swing",
+        min: 0,
+        max: 20,
+        unit: "°",
+    },
+})
+
+// --- Styles ---
+const containerStyle: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
+    position: "relative",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "visible",
+}
+
+const imageStyle: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    pointerEvents: "none",
+}
+
+const placeholderStyle: React.CSSProperties = {
+    display: "flex",
+    width: "100%",
+    height: "100%",
+    backgroundColor: "rgba(0,0,0,0.05)",
+    border: "1px dashed #ccc",
+    color: "#999",
+    fontSize: "12px",
+    justifyContent: "center",
+    alignItems: "center",
+}
